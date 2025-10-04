@@ -1,87 +1,90 @@
-name: Build Flet Apps
+name: Build Flet APK
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ main, master ]
   pull_request:
-    branches: [ "main" ]
-
-env:
-  BUILD_NUMBER: 1
-  BUILD_VERSION: 1.0.0
-  PYTHON_VERSION: 3.12.2
-  FLUTTER_VERSION: 3.24.0
+    branches: [ main, master ]
+  workflow_dispatch:  # Allow manual triggers
 
 jobs:
-  setup:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install flet-cli
-        run: pip install flet
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-
-      - name: Flutter doctor
-        run: flutter doctor -v
-
   build-apk:
     runs-on: ubuntu-latest
-    needs: setup
+    
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install flet-cli
-        run: pip install flet
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-
-      - name: Build APK
-        run: flet build apk
-
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-release-apk
-          path: build/flet/**/outputs/flutter-apk/app-release.apk
-
-  build-aab:
-    runs-on: ubuntu-latest
-    needs: setup
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install flet-cli
-        run: pip install flet
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-
-      - name: Build AAB
-        run: flet build aab
-
-      - name: Upload AAB artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-release-aab
-          path: build/flet/**/outputs/bundle/release/app-release.aab
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install Flet and build dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install flet==0.25.2
+        pip install flet[android]
+        
+    - name: Install system dependencies for Android build
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y openjdk-17-jdk wget unzip
+        # Install Android Command Line Tools
+        wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
+        mkdir -p android-sdk/cmdline-tools
+        unzip -q commandlinetools-linux-9477386_latest.zip -d android-sdk/cmdline-tools
+        mv android-sdk/cmdline-tools/cmdline-tools android-sdk/cmdline-tools/latest
+        rm commandlinetools-linux-9477386_latest.zip
+        
+    - name: Set up Android SDK
+      run: |
+        echo "ANDROID_SDK_ROOT=$GITHUB_WORKSPACE/android-sdk" >> $GITHUB_ENV
+        echo "$GITHUB_WORKSPACE/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
+        # Accept licenses
+        yes | $GITHUB_WORKSPACE/android-sdk/cmdline-tools/latest/bin/sdkmanager --licenses
+        
+    - name: Install Android build tools and platform
+      run: |
+        $GITHUB_WORKSPACE/android-sdk/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.0"
+        
+    - name: Verify project structure
+      run: |
+        echo "Project structure:"
+        find . -type f -name "*.py" | head -10
+        echo "Checking for main.py:"
+        ls -la main.py || echo "main.py not found in root"
+        echo "Checking python directory:"
+        ls -la python/ || echo "python directory not found"
+        echo "Checking for author files:"
+        ls -la auther* || echo "No author files found"
+        
+    - name: Build APK
+      run: |
+        flet build apk --include-packages python --include-packages auther
+        # Alternative if the above doesn't work:
+        # flet build apk -v --include-packages python
+        
+    - name: List build artifacts
+      run: |
+        find . -name "*.apk" -type f
+        ls -la build/
+        
+    - name: Upload APK artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: flet-app-apk
+        path: |
+          build/*.apk
+          build/apk/**/*.apk
+        retention-days: 30
+        
+    - name: Upload build logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-logs
+        path: |
+          build/logs/
+          build/
+        retention-days: 7
